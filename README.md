@@ -1,15 +1,16 @@
-# X Affiliate Bot 🤖
+# X Affiliate Bot
 
 **Googleトレンドを監視して、AIが投稿文＋画像を自動生成し、アフィリエイトリンク付きでXに投稿するbot**
 
 ```
 Google Trends RSS (JP)
-        │ トレンドワード取得
+        │ トレンドワード取得・安全フィルタ
         ▼
-Gemini API
+Gemini API (gemini-1.5-flash)
         │ 日本語投稿文 + 画像プロンプト + カテゴリ生成
         ▼
-HuggingFace (FLUX.1-schnell)
+HuggingFace Inference API
+        │ FLUX.1-schnell → SDXL → SD2.1 フォールバック
         │ 画像生成 → X v1.1 API でアップロード
         ▼
 アフィリエイトリンク取得（楽天/Amazon）
@@ -33,6 +34,27 @@ GitHub Actions で毎日3回（JST 8:00 / 12:00 / 19:00）自動実行。
 
 ---
 
+## ファイル構成
+
+```
+.
+├── src/
+│   ├── main.py            # エントリーポイント・パイプライン制御
+│   ├── trend_collector.py # Google Trends RSS 取得・安全フィルタ
+│   ├── ai_generator.py    # Gemini API 投稿文生成
+│   ├── affiliate.py       # アフィリエイトリンク管理
+│   ├── image_generator.py # HuggingFace 画像生成 + X アップロード
+│   └── x_poster.py        # X API v2 投稿
+├── .github/
+│   └── workflows/
+│       └── bot.yml        # GitHub Actions スケジュール実行
+├── .env.example           # 環境変数テンプレート
+├── requirements.txt       # Python 依存ライブラリ
+└── README.md
+```
+
+---
+
 ## 必要なAPIキー
 
 | キー | 取得先 | 無料枠 |
@@ -47,8 +69,8 @@ GitHub Actions で毎日3回（JST 8:00 / 12:00 / 19:00）自動実行。
 ## セットアップ
 
 ```bash
-git clone https://github.com/taku629/x-affiliate-bot.git
-cd x-affiliate-bot
+git clone https://github.com/taku629/-x-affiliate-bot.git
+cd -x-affiliate-bot
 
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -57,13 +79,14 @@ cp .env.example .env
 # .env を編集してAPIキーを設定
 ```
 
-### アフィリエイトリンクの差し替え
+### アフィリエイトリンクの設定
 
-`src/affiliate.py` の `AFFILIATE_LINKS` 辞書内の `REPLACE_ME` を実際のURLに書き換えてください。
+`src/affiliate.py` の `AFFILIATE_LINKS` 辞書内の `REPLACE_ME` を実際のアフィリエイトURLに書き換えてください。
 
 ```python
 AFFILIATE_LINKS = {
-    "sports": "https://楽天アフィリエイトのURL",
+    "sports":    "https://あなたの楽天アフィリエイトURL/sports",
+    "tech":      "https://あなたのAmazonアソシエイトURL/tech",
     # ...
 }
 ```
@@ -103,23 +126,10 @@ HF_API_TOKEN
 RAKUTEN_AFFILIATE_ID
 ```
 
-設定後、`.github/workflows/bot.yml` が毎日3回自動実行されます。
+設定後、`.github/workflows/bot.yml` が毎日3回（JST 8:00 / 12:00 / 19:00）自動実行されます。
 
 手動実行は `Actions > X Affiliate Bot > Run workflow` から可能。
-
----
-
-## アーキテクチャ
-
-```
-src/
-├── main.py            # エントリーポイント・パイプライン制御
-├── trend_collector.py # Google Trends RSS 取得・安全フィルタ
-├── ai_generator.py    # Gemini API 投稿文生成
-├── affiliate.py       # アフィリエイトリンク管理
-├── image_generator.py # HuggingFace 画像生成 + X アップロード
-└── x_poster.py        # X API v2 投稿
-```
+手動実行時は `dry_run`・`no_image`・`posts` オプションを選択できます。
 
 ---
 
@@ -134,3 +144,18 @@ src/
 | **合計** | **¥0** |
 
 アフィリエイト収益のみで運営可能な構成です。
+
+---
+
+## トラブルシューティング
+
+### 画像生成が失敗する
+HuggingFace の無料枠はレート制限があり、モデルのウォームアップに時間がかかることがあります。  
+`--no-image` フラグでテキストのみ投稿できます。
+
+### 安全なトレンドが見つからない
+`trend_collector.py` の `_BLOCK_KEYWORDS` を調整してフィルタを緩めることができます。
+
+### X API の 403 エラー
+X Developer Portal でアプリに **Read and Write** 権限が付与されているか確認してください。  
+Free プランは 50ツイート/24h の制限があります。
