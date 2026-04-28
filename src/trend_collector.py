@@ -4,6 +4,11 @@ trend_collector.py
 Google Trends RSS (JP) からトレンドワードを取得する。
 
 データソース: https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP
+
+バイラルスコアリング:
+  - トラフィック量（絶対値）
+  - ニュース記事数（文脈が豊富なほどAI生成が高品質になる）
+  - カテゴリ係数（エンタメ・スポーツはバズりやすい）
 """
 from __future__ import annotations
 
@@ -20,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 TRENDS_RSS_URL = "https://trends.google.com/trending/rss?geo=JP"
 
-# 炎上リスクが高いキーワードパターン（safe_only=True 時に除外）
 _UNSAFE_PATTERNS = [
     r"死亡", r"死去", r"訃報", r"逝去", r"遺体", r"遺族",
     r"事故", r"事件", r"殺人", r"殺害", r"暴行", r"逮捕",
@@ -31,6 +35,16 @@ _UNSAFE_PATTERNS = [
     r"差別", r"ハラスメント", r"炎上",
 ]
 _UNSAFE_RE = re.compile("|".join(_UNSAFE_PATTERNS))
+
+# カテゴリキーワード → バイラル係数（エンタメ・スポーツはバズりやすい）
+_VIRAL_CATEGORY_BOOST: list[tuple[re.Pattern, float]] = [
+    (re.compile(r"映画|ドラマ|アニメ|ゲーム|音楽|アーティスト|俳優|女優|歌手"), 1.4),
+    (re.compile(r"スポーツ|野球|サッカー|テニス|ゴルフ|バスケ|格闘技|五輪|W杯"), 1.3),
+    (re.compile(r"グルメ|料理|レシピ|スイーツ|カフェ|ラーメン|寿司"), 1.2),
+    (re.compile(r"ファッション|コスメ|美容|スキンケア|ダイエット"), 1.2),
+    (re.compile(r"旅行|観光|ホテル|温泉|絶景"), 1.15),
+    (re.compile(r"AI|ChatGPT|スマホ|iPhone|アプリ|ガジェット"), 1.1),
+]
 
 
 @dataclass
@@ -48,13 +62,44 @@ class TrendItem:
     picture_url: Optional[str] = None
 
     def __str__(self) -> str:
-        return f"TrendItem(keyword={self.keyword!r}, traffic={self.approx_traffic})"
+        return (
+            f"TrendItem(keyword={self.keyword!r}, "
+            f"traffic={self.approx_traffic}, "
+            f"viral_score={self.viral_score():.2f})"
+        )
 
     def is_safe(self) -> bool:
         text = self.keyword
         if self.news_items:
             text += " " + " ".join(n.title for n in self.news_items)
         return not bool(_UNSAFE_RE.search(text))
+
+    def _traffic_value(self) -> int:
+        raw = re.sub(r"[^\d]", "", self.approx_traffic)
+        return int(raw) if raw else 0
+
+    def viral_score(self) -> float:
+        """
+        バイラル潜在力スコア（0.0〜1.0+）を返す。
+        選定の優先度付けに使用する。
+
+        計算式:
+          base  = traffic / 1,000,000（上限なし: 100万超で1.0超え）
+          news  = min(len(news_items) * 0.08, 0.3)  # 最大 0.3 加算
+          boost = カテゴリ係数（エンタメ等は最大 1.4 倍）
+        """
+        traffic = self._traffic_value()
+        base = traffic / 1_000_000
+
+        news_bonus = min(len(self.news_items) * 0.08, 0.3)
+
+        category_multiplier = 1.0
+        text = self.keyword + " ".join(n.title for n in self.news_items)
+        for pattern, mult in _VIRAL_CATEGORY_BOOST:
+            if pattern.search(text):
+                category_multiplier = max(category_multiplier, mult)
+
+        return (base + news_bonus) * category_multiplier
 
 
 def _fetch_rss(url: str, timeout: int = 10) -> bytes:
@@ -108,6 +153,7 @@ def get_trends(
     top_n: int = 5,
     safe_only: bool = True,
     shuffle: bool = False,
+    sort_by_viral: bool = True,
     timeout: int = 10,
 ) -> list[TrendItem]:
     """
@@ -115,10 +161,11 @@ def get_trends(
 
     Parameters
     ----------
-    top_n     : 返す件数の上限
-    safe_only : True のとき炎上リスクの高いトピックを除外する
-    shuffle   : True のときランダムな順序で返す（同じトレンドの繰り返しを防ぐ）
-    timeout   : HTTP タイムアウト秒数
+    top_n          : 返す件数の上限
+    safe_only      : True のとき炎上リスクの高いトピックを除外する
+    shuffle        : True のときランダムな順序で返す（sort_by_viral が False のときのみ有効）
+    sort_by_viral  : True のときバイラルスコアで降順ソートする（デフォルト True）
+    timeout        : HTTP タイムアウト秒数
     """
     try:
         xml_bytes = _fetch_rss(TRENDS_RSS_URL, timeout=timeout)
@@ -133,7 +180,14 @@ def get_trends(
         trends = [t for t in trends if t.is_safe()]
         logger.info("安全フィルタ: %d件 → %d件", before, len(trends))
 
-    if shuffle:
+    if sort_by_viral:
+        trends.sort(key=lambda t: t.viral_score(), reverse=True)
+        logger.info(
+            "バイラルスコア順ソート完了: top=%s (score=%.2f)",
+            trends[0].keyword if trends else "N/A",
+            trends[0].viral_score() if trends else 0.0,
+        )
+    elif shuffle:
         random.shuffle(trends)
 
     return trends[:top_n]
@@ -141,18 +195,18 @@ def get_trends(
 
 def pick_best_trend(safe_only: bool = True, timeout: int = 10) -> TrendItem:
     """
-    最もトラフィックが多いトレンドを1件返す。
+    バイラルスコアが最も高いトレンドを1件返す。
 
     Raises
     ------
     RuntimeError : 有効なトレンドが0件の場合
     """
-    trends = get_trends(top_n=20, safe_only=safe_only, shuffle=False, timeout=timeout)
+    trends = get_trends(
+        top_n=20,
+        safe_only=safe_only,
+        sort_by_viral=True,
+        timeout=timeout,
+    )
     if not trends:
         raise RuntimeError("有効なトレンドが見つかりませんでした")
-
-    def _traffic_value(t: TrendItem) -> int:
-        raw = re.sub(r"[^\d]", "", t.approx_traffic)
-        return int(raw) if raw else 0
-
-    return max(trends, key=_traffic_value)
+    return trends[0]
