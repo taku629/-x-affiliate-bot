@@ -36,34 +36,31 @@ logger = logging.getLogger(__name__)
 # ※ URLは短縮せずそのまま記載してください（Xが t.co で自動短縮します）
 
 AFFILIATE_LINKS: dict[str, str] = {
-    # スポーツ用品・トレーニンググッズ
-    "sports": "https://www.rakuten.co.jp/search/sports/?dummy=REPLACE_ME",
-
-    # エンタメ（音楽・映画・ゲーム・書籍）
-    "entertainment": "https://www.rakuten.co.jp/search/entertainment/?dummy=REPLACE_ME",
-
-    # テクノロジー・ガジェット
-    "tech": "https://www.rakuten.co.jp/search/tech/?dummy=REPLACE_ME",
-
-    # ファッション・アパレル
-    "fashion": "https://www.rakuten.co.jp/search/fashion/?dummy=REPLACE_ME",
-
-    # グルメ・食品
-    "food": "https://www.rakuten.co.jp/search/food/?dummy=REPLACE_ME",
-
-    # 旅行・宿泊
-    "travel": "https://travel.rakuten.co.jp/?dummy=REPLACE_ME",
-
-    # 健康・美容・ダイエット
-    "health": "https://www.rakuten.co.jp/search/health/?dummy=REPLACE_ME",
-
-    # 書籍・雑誌
-    "books": "https://books.rakuten.co.jp/?dummy=REPLACE_ME",
-
-    # その他・汎用（上記に当てはまらないもの）
-    "other": "https://www.rakuten.co.jp/?dummy=REPLACE_ME",
+    # ▼▼▼ 楽天アフィリエイト管理画面で発行したURLに差し替えてください ▼▼▼
+    # https://affiliate.rakuten.co.jp/ → ツールボックス → テキストリンク
+    "sports":        "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E3%82%B9%E3%83%9D%E3%83%BC%E3%83%84%2F",
+    "entertainment": "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E3%82%A8%E3%83%B3%E3%82%BF%E3%83%A1%2F",
+    "tech":          "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E3%82%AC%E3%82%B8%E3%82%A7%E3%83%83%E3%83%88%2F",
+    "fashion":       "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E3%83%95%E3%82%A1%E3%83%83%E3%82%B7%E3%83%A7%E3%83%B3%2F",
+    "food":          "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E3%82%B0%E3%83%AB%E3%83%A1%2F",
+    "travel":        "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Ftravel.rakuten.co.jp%2F",
+    "health":        "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F%E5%81%A5%E5%BA%B7%2F",
+    "books":         "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fbooks.rakuten.co.jp%2F",
+    "other":         "https://hb.afl.rakuten.co.jp/ichiba/REPLACE_ME/?pc=https%3A%2F%2Fwww.rakuten.co.jp%2F",
+    # ▲▲▲ ここまで ▲▲▲
 }
-# ▲▲▲ ここまで ▲▲▲
+
+# 環境変数で上書き可能（Secrets で管理する場合）
+# 例: AFFILIATE_URL_TECH=https://hb.afl.rakuten.co.jp/... を設定すると
+#     AFFILIATE_LINKS["tech"] をその値で上書きする。
+def _override_from_env() -> None:
+    for cat in list(AFFILIATE_LINKS.keys()):
+        env_key = f"AFFILIATE_URL_{cat.upper()}"
+        val = os.environ.get(env_key, "")
+        if val:
+            AFFILIATE_LINKS[cat] = val
+
+_override_from_env()
 
 # 楽天アフィリエイトIDをURLに付与する場合のパラメータキー
 _RAKUTEN_AFFILIATE_PARAM = "a_id"

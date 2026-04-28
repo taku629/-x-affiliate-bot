@@ -12,39 +12,74 @@ Gemini API
 HuggingFace (FLUX.1-schnell)
         │ 画像生成 → X v1.1 API でアップロード
         ▼
-アフィリエイトリンク取得（楽天/Amazon）
+アフィリエイトリンク取得（楽天）
         │
         ▼
 X API v2 で投稿
 ```
 
-GitHub Actions で毎日3回（JST 8:00 / 12:00 / 19:00）自動実行。
+GitHub Actions で毎日3回（JST 8:00 / 12:00 / 19:00）自動実行。月間コスト **¥0**。
 
 ---
 
-## 特徴
+## 最速マネタイズ チェックリスト
 
-- **完全自動**: 一度セットアップすれば毎日自動投稿
-- **安全フィルタ**: 事故・訃報・政治などの炎上リスクが高いトピックを自動除外
-- **画像付き投稿**: FLUX.1-schnell → SDXL → SD2.1 のフォールバックで高確率で画像生成
-- **アフィリエイト対応**: カテゴリ別に楽天/Amazonリンクを自動付与
-- **ドライラン**: `--dry-run` で投稿せずに内容確認
-- **コスト最小**: Gemini無料枠 (1,500req/day) + HuggingFace無料枠で運用可能
+### 1. APIキー取得（所要時間目安）
+
+| キー | 取得先 | 時間 | 無料枠 |
+|---|---|---|---|
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) | **5分** | 1,500 req/day |
+| `RAKUTEN_AFFILIATE_ID` | [楽天アフィリエイト](https://affiliate.rakuten.co.jp/) | **10分** | 無料（審査なし） |
+| `X_API_KEY` 等 | [X Developer Portal](https://developer.twitter.com/en/portal/dashboard) | **15分** | 50ツイート/24h |
+| `HF_API_TOKEN` | [HuggingFace Settings](https://huggingface.co/settings/tokens) | **3分** | レート制限あり |
+
+### 2. 楽天アフィリエイトリンクの発行
+
+1. [楽天アフィリエイト管理画面](https://affiliate.rakuten.co.jp/) にログイン
+2. 「ツールボックス」→「テキストリンク」→ 各カテゴリのリンクを発行
+3. `src/affiliate.py` の `AFFILIATE_LINKS` 辞書に貼り付け（`REPLACE_ME` を置き換え）
+
+または GitHub Secrets で環境変数として設定（コードを書き換えずに済む）:
+```
+AFFILIATE_URL_SPORTS=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_TECH=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_FASHION=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_FOOD=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_TRAVEL=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_HEALTH=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_BOOKS=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_ENTERTAINMENT=https://hb.afl.rakuten.co.jp/...
+AFFILIATE_URL_OTHER=https://hb.afl.rakuten.co.jp/...
+```
+
+### 3. GitHub Secrets に設定
+
+`Settings > Secrets and variables > Actions > New repository secret` で以下を設定:
+
+```
+X_API_KEY
+X_API_SECRET
+X_ACCESS_TOKEN
+X_ACCESS_TOKEN_SECRET
+X_BEARER_TOKEN
+GEMINI_API_KEY
+HF_API_TOKEN
+RAKUTEN_AFFILIATE_ID
+
+# アフィリエイトURLを環境変数で管理する場合（任意）
+AFFILIATE_URL_SPORTS
+AFFILIATE_URL_TECH
+...
+```
+
+### 4. 動作確認（dry-run）
+
+GitHub Actions の手動実行（`Actions > X Affiliate Bot > Run workflow`）で  
+`dry_run: true` を選んで投稿内容を確認してから本番稼働させてください。
 
 ---
 
-## 必要なAPIキー
-
-| キー | 取得先 | 無料枠 |
-|---|---|---|
-| `X_API_KEY` 等 | [X Developer Portal](https://developer.twitter.com/en/portal/dashboard) | Free（50ツイート/24h） |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) | 1,500 req/day |
-| `HF_API_TOKEN` | [HuggingFace Settings](https://huggingface.co/settings/tokens) | レート制限あり |
-| `RAKUTEN_AFFILIATE_ID` | [楽天アフィリエイト](https://affiliate.rakuten.co.jp/) | 無料 |
-
----
-
-## セットアップ
+## セットアップ（ローカル実行）
 
 ```bash
 git clone https://github.com/taku629/x-affiliate-bot.git
@@ -57,55 +92,21 @@ cp .env.example .env
 # .env を編集してAPIキーを設定
 ```
 
-### アフィリエイトリンクの差し替え
-
-`src/affiliate.py` の `AFFILIATE_LINKS` 辞書内の `REPLACE_ME` を実際のURLに書き換えてください。
-
-```python
-AFFILIATE_LINKS = {
-    "sports": "https://楽天アフィリエイトのURL",
-    # ...
-}
-```
-
----
-
-## 実行方法
+### ローカル実行コマンド
 
 ```bash
-# 通常実行（1件投稿）
-python src/main.py
-
-# 投稿内容だけ確認（Xへの投稿なし）
-python src/main.py --dry-run
+# 内容確認のみ（Xへの投稿なし・APIキー不要）
+python src/main.py --dry-run --no-image
 
 # 画像なしで投稿（HFトークン不要）
 python src/main.py --no-image
 
+# 通常実行（1件投稿）
+python src/main.py
+
 # 1回の実行で3件投稿
 python src/main.py --posts 3
 ```
-
----
-
-## GitHub Actions による自動実行
-
-`Settings > Secrets and variables > Actions` で以下のSecretsを設定：
-
-```
-X_API_KEY
-X_API_SECRET
-X_ACCESS_TOKEN
-X_ACCESS_TOKEN_SECRET
-X_BEARER_TOKEN
-GEMINI_API_KEY
-HF_API_TOKEN
-RAKUTEN_AFFILIATE_ID
-```
-
-設定後、`.github/workflows/bot.yml` が毎日3回自動実行されます。
-
-手動実行は `Actions > X Affiliate Bot > Run workflow` から可能。
 
 ---
 
@@ -116,21 +117,22 @@ src/
 ├── main.py            # エントリーポイント・パイプライン制御
 ├── trend_collector.py # Google Trends RSS 取得・安全フィルタ
 ├── ai_generator.py    # Gemini API 投稿文生成
-├── affiliate.py       # アフィリエイトリンク管理
+├── affiliate.py       # アフィリエイトリンク管理（環境変数上書き対応）
 ├── image_generator.py # HuggingFace 画像生成 + X アップロード
 └── x_poster.py        # X API v2 投稿
+
+.github/workflows/
+└── bot.yml            # GitHub Actions 自動実行（JST 8:00 / 12:00 / 19:00）
 ```
 
 ---
 
 ## コスト
 
-| サービス | 月間コスト目安 |
+| サービス | 月間コスト |
 |---|---|
 | X API（Free枠） | 無料（50ツイート/24h） |
-| Gemini API | 無料（1,500req/day まで） |
+| Gemini API | 無料（1,500 req/day まで） |
 | HuggingFace | 無料（レート制限あり） |
 | GitHub Actions | 無料（public repo は無制限） |
 | **合計** | **¥0** |
-
-アフィリエイト収益のみで運営可能な構成です。
