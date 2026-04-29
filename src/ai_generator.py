@@ -3,7 +3,7 @@ ai_generator.py
 ---------------
 Google Gemini API を使って、トレンドワードから X投稿コンテンツを生成する。
 
-無料枠: gemini-1.5-flash — 15 RPM / 1,500 RPD / 1M TPM
+無料枠: gemini-2.0-flash — 15 RPM / 1,500 RPD / 1M TPM
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ VALID_CATEGORIES = {
     "food", "travel", "health", "books", "other",
 }
 
-_GEMINI_MODEL = "gemini-1.5-flash"
+_GEMINI_MODEL = "gemini-2.0-flash"
 
 
 @dataclass
