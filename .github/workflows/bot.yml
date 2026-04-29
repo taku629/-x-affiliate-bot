@@ -111,7 +111,20 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
       # ----------------------------------------------------------
-      # 6. ボットの実行（tweet結果は Python が Summary に追記）
+      # 6. API キーの存在確認（値は出力しない）
+      # ----------------------------------------------------------
+      - name: Check required secrets
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY が空です。Settings → Secrets → ANTHROPIC_API_KEY を確認してください。"
+            exit 1
+          fi
+          echo "::notice::ANTHROPIC_API_KEY 確認OK (長さ: ${#ANTHROPIC_API_KEY}文字)"
+
+      # ----------------------------------------------------------
+      # 7. ボットの実行（tweet結果は Python が Summary に追記）
       # ----------------------------------------------------------
       - name: Run affiliate bot
         env:
@@ -175,7 +188,7 @@ jobs:
           $CMD
 
       # ----------------------------------------------------------
-      # 7. 投稿ログをアーティファクトとして保存（失敗時も保存）
+      # 8. 投稿ログをアーティファクトとして保存（失敗時も保存）
       # ----------------------------------------------------------
       - name: Upload post logs as artifact
         if: always()
@@ -187,7 +200,7 @@ jobs:
           retention-days: 90
 
       # ----------------------------------------------------------
-      # 8. 失敗時に詳細なエラーサマリーを表示
+      # 9. 失敗時に詳細なエラーサマリーを表示
       # ----------------------------------------------------------
       - name: Show error summary on failure
         if: failure()
