@@ -27,6 +27,7 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +58,22 @@ from ai_generator import GeneratedContent, generate_post_content
 from image_generator import UploadResult, generate_and_upload
 from affiliate import AffiliateLink, get_affiliate_link
 from x_poster import PostResult, post_to_x
+from result_logger import (
+    build_post_record, save_post_result,
+    load_recent_posts, is_duplicate_trend,
+)
+
+# カテゴリ許可リスト（カンマ区切り環境変数。未設定なら全カテゴリ許可）
+# 例: ALLOWED_CATEGORIES="entertainment,tech,food,health,fashion"
+_raw_allowed = os.environ.get("ALLOWED_CATEGORIES", "")
+ALLOWED_CATEGORIES: Optional[set] = (
+    {c.strip().lower() for c in _raw_allowed.split(",") if c.strip()}
+    if _raw_allowed else None
+)
+
+
+class _CategorySkipped(Exception):
+    """カテゴリ許可リスト外のためスキップ（失敗カウントしない）。"""
 
 
 # =====================================================================
@@ -91,6 +108,22 @@ class RunSummary:
             logger.error("  ✗ %s", e)
         logger.info("=" * 50)
 
+        # GitHub Actions Step Summary への書き出し
+        ghs = os.environ.get("GITHUB_STEP_SUMMARY")
+        if ghs:
+            with open(ghs, "a", encoding="utf-8") as f:
+                f.write("\n### 投稿結果\n\n")
+                f.write(f"| | 件数 |\n|---|---|\n")
+                f.write(f"| ✅ 成功 | {self.succeeded} |\n")
+                f.write(f"| ❌ 失敗 | {self.failed} |\n\n")
+                for r in self.results:
+                    if r.tweet_url == "https://x.com/dry_run":
+                        f.write(f"- DRY RUN（未投稿）: `{r.full_text[:60]}...`\n")
+                    else:
+                        f.write(f"- [{r.tweet_url}]({r.tweet_url})\n")
+                for e in self.errors:
+                    f.write(f"- ❌ `{e}`\n")
+
 
 # =====================================================================
 # パイプライン: 1件のトレンドを処理
@@ -102,10 +135,12 @@ def process_one_trend(
     dry_run: bool = False,
     with_image: bool = True,
     use_placeholder_on_image_failure: bool = True,
+    allowed_categories: Optional[set] = None,
 ) -> PostResult:
     """
     トレンド1件に対してテキスト生成→画像→投稿までを実行し PostResult を返す。
     各ステップでエラーが起きても詳細なログを出力してから再 raise する。
+    allowed_categories が指定されたカテゴリ外なら _CategorySkipped を raise する。
     """
     step = "初期化"
     try:
@@ -120,11 +155,19 @@ def process_one_trend(
             step, content.post_char_count, content.affiliate_category,
         )
 
+        # カテゴリ許可リストチェック（Gemini呼び出し後）
+        if allowed_categories and content.affiliate_category not in allowed_categories:
+            logger.info(
+                "[カテゴリスキップ] '%s' は許可リスト外のためスキップします (許可: %s)",
+                content.affiliate_category, sorted(allowed_categories),
+            )
+            raise _CategorySkipped(content.affiliate_category)
+
         # --------------------------------------------------------
         # STEP B: 画像生成＆アップロード（HuggingFace → X v1.1）
         # --------------------------------------------------------
         media_id: Optional[str] = None
-        if with_image:
+        if with_image and not dry_run:
             step = "画像生成 (HuggingFace)"
             logger.info("[%s] 開始: prompt=%s...", step, content.image_prompt[:60])
             upload: UploadResult = generate_and_upload(
@@ -137,7 +180,8 @@ def process_one_trend(
                 step, upload.model_used, upload.size_bytes, media_id,
             )
         else:
-            logger.info("[画像生成] --no-image フラグのためスキップ")
+            reason = "dry_run モード" if dry_run else "--no-image フラグ"
+            logger.info("[画像生成] %s のためスキップ", reason)
 
         # --------------------------------------------------------
         # STEP C: アフィリエイトリンク取得
@@ -148,6 +192,12 @@ def process_one_trend(
             "[%s] category=%s is_dummy=%s",
             step, affiliate.category, affiliate.is_dummy,
         )
+
+        if affiliate.is_dummy and not dry_run:
+            raise RuntimeError(
+                f"アフィリエイトURL が未設定です (category={affiliate.category})。"
+                " src/affiliate.py の REPLACE_ME を本物URLに差し替えてください。"
+            )
 
         # --------------------------------------------------------
         # STEP D: X への投稿 (v2)
@@ -161,7 +211,25 @@ def process_one_trend(
             dry_run=dry_run,
         )
         logger.info("[%s] 完了: %s", step, result.tweet_url)
+
+        # 投稿結果を JSONL に保存
+        save_post_result(build_post_record(
+            trend_name=trend.keyword,
+            category=content.affiliate_category,
+            affiliate_url=affiliate.url,
+            post_text=result.full_text,
+            tweet_id=result.tweet_id,
+            tweet_url=result.tweet_url,
+            dry_run=dry_run,
+            with_image=with_image,
+            media_id=result.media_id,
+            hook_type=getattr(content, "hook_type", None),
+        ))
+
         return result
+
+    except _CategorySkipped:
+        raise  # エラーログなしで上位に伝える
 
     except Exception as e:
         logger.error(
@@ -194,9 +262,10 @@ def run(
     summary = RunSummary()
     logger.info("=" * 50)
     logger.info("X アフィリエイトボット 起動")
-    logger.info("  posts_per_run  = %d", posts_per_run)
-    logger.info("  dry_run        = %s", dry_run)
-    logger.info("  with_image     = %s", with_image)
+    logger.info("  posts_per_run      = %d", posts_per_run)
+    logger.info("  dry_run            = %s", dry_run)
+    logger.info("  with_image         = %s", with_image)
+    logger.info("  allowed_categories = %s", sorted(ALLOWED_CATEGORIES) if ALLOWED_CATEGORIES else "全カテゴリ")
     logger.info("=" * 50)
 
     # --------------------------------------------------------
@@ -226,9 +295,23 @@ def run(
         logger.info("  → %s", t)
 
     # --------------------------------------------------------
+    # 重複チェック用: 直近24時間の投稿記録を読み込む
+    # --------------------------------------------------------
+    recent_posts = load_recent_posts()
+    if recent_posts:
+        logger.info("[重複チェック] 過去24時間の投稿: %d件", len(recent_posts))
+
+    # --------------------------------------------------------
     # STEP 2〜5: 各トレンドを処理
     # --------------------------------------------------------
     for i, trend in enumerate(trends):
+        # 重複スキップ
+        if is_duplicate_trend(trend.keyword, recent_posts):
+            logger.warning(
+                "[重複スキップ] 「%s」は過去24時間に投稿済みです", trend.keyword
+            )
+            continue
+
         if i > 0:
             logger.info("次の投稿まで %.1f秒 待機...", interval_between_posts)
             time.sleep(interval_between_posts)
@@ -240,8 +323,16 @@ def run(
                 trend,
                 dry_run=dry_run,
                 with_image=with_image,
+                allowed_categories=ALLOWED_CATEGORIES,
             )
             summary.add_success(result)
+            # 同一ランでの重複を防ぐためにメモリ上のリストにも追加
+            recent_posts.append({
+                "trend_name": trend.keyword,
+                "posted_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except _CategorySkipped as e:
+            logger.info("[カテゴリスキップ] 「%s」: %s", trend.keyword, e)
         except Exception as e:
             summary.add_failure(f"「{trend.keyword}」: {e}")
 

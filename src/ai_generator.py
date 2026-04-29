@@ -200,6 +200,11 @@ def generate_post_content(
         if _count_x_chars(post_text) > POST_BODY_LIMIT:
             post_text = _trim_to_limit(post_text, [])
 
+    # CTA 品質チェック（弱いテキストの早期警告）
+    _CTA_KEYWORDS = ["リンク", "チェック", "詳しくは", "購入", "はこちら", "もっと", "今すぐ", "試して", "おすすめ", "必見"]
+    if not any(kw in post_text for kw in _CTA_KEYWORDS):
+        logger.warning("CTA が弱い可能性があります。post_text にクリック誘導フレーズが含まれていません。")
+
     logger.info(
         "生成完了: %d字 category=%s", _count_x_chars(post_text), fixed["affiliate_category"]
     )
