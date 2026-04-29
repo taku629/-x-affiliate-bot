@@ -68,7 +68,35 @@ AFFILIATE_LINKS: dict[str, Union[str, list[str]]] = {
     # その他・汎用（上記に当てはまらないもの）
     "other": "https://www.rakuten.co.jp/?dummy=REPLACE_ME",
 }
-# ▲▲▲ ここまで ▲▲▲
+# ▲▲▲ 楽天リンクここまで ▲▲▲
+
+# =====================================================================
+# Amazon アソシエイトリンク辞書
+# =====================================================================
+# AFFILIATE_ASP=amazon のときに使用される。
+# tag= の REPLACE_ME を Amazon アソシエイトのトラッキングIDに差し替えてください。
+# 取得先: https://affiliate.amazon.co.jp/
+
+AFFILIATE_LINKS_AMAZON: dict[str, Union[str, list[str]]] = {
+    "sports":        "https://www.amazon.co.jp/s?k=スポーツ用品&tag=REPLACE_ME",
+    "entertainment": "https://www.amazon.co.jp/s?k=エンタメ&tag=REPLACE_ME",
+    "tech":          "https://www.amazon.co.jp/s?k=ガジェット&tag=REPLACE_ME",
+    "fashion":       "https://www.amazon.co.jp/s?k=ファッション&tag=REPLACE_ME",
+    "food":          "https://www.amazon.co.jp/s?k=食品&tag=REPLACE_ME",
+    "travel":        "https://www.amazon.co.jp/s?k=旅行グッズ&tag=REPLACE_ME",
+    "health":        "https://www.amazon.co.jp/s?k=健康グッズ&tag=REPLACE_ME",
+    "books":         "https://www.amazon.co.jp/s?k=本&tag=REPLACE_ME",
+    "other":         "https://www.amazon.co.jp/?tag=REPLACE_ME",
+}
+
+
+def _get_links_dict() -> dict[str, Union[str, list[str]]]:
+    """環境変数 AFFILIATE_ASP に応じてリンク辞書を返す（デフォルト: rakuten）。"""
+    asp = os.environ.get("AFFILIATE_ASP", "rakuten").lower().strip()
+    if asp == "amazon":
+        return AFFILIATE_LINKS_AMAZON
+    return AFFILIATE_LINKS
+
 
 # 楽天アフィリエイトIDをURLに付与する場合のパラメータキー
 _RAKUTEN_AFFILIATE_PARAM = "a_id"
@@ -131,15 +159,17 @@ def get_affiliate_link(
     -------
     AffiliateLink
     """
+    links = _get_links_dict()
+
     # カテゴリが辞書にない場合は "other" にフォールバック
     normalized = category.lower().strip()
-    if normalized not in AFFILIATE_LINKS:
+    if normalized not in links:
         logger.warning(
             "Unknown affiliate category '%s'. Falling back to 'other'.", category
         )
         normalized = "other"
 
-    raw = AFFILIATE_LINKS[normalized]
+    raw = links[normalized]
     base_url = random.choice(raw) if isinstance(raw, list) else raw
     is_dummy  = "REPLACE_ME" in base_url
 

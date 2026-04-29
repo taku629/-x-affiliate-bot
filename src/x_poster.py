@@ -20,13 +20,13 @@ from typing import Optional
 import tweepy
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
     before_sleep_log,
 )
 
-from ai_generator import GeneratedContent
+from ai_generator import GeneratedContent, PostMode
 from affiliate import AffiliateLink
 
 logger = logging.getLogger(__name__)
@@ -59,18 +59,17 @@ class PostResult:
 
 def build_tweet_text(
     content: GeneratedContent,
-    affiliate_link: AffiliateLink,
+    affiliate_link: Optional[AffiliateLink],
+    post_mode: PostMode = "affiliate",
 ) -> str:
     """
     投稿テキストを組み立てる。
 
-    フォーマット:
-      {post_text}
-      {affiliate_url}
-
-    post_text は ai_generator で 116字制限済み。
-    改行 + URL で +24字 → 合計 140字以内。
+    affiliate モード: "{post_text}\n{affiliate_url}" (合計140字以内)
+    normal モード  : "{post_text}" のみ（URLなし）
     """
+    if post_mode == "normal" or affiliate_link is None:
+        return content.post_text
     return f"{content.post_text}\n{affiliate_link.url}"
 
 
@@ -148,9 +147,21 @@ def _load_x_credentials() -> dict[str, str]:
 # 投稿処理
 # =====================================================================
 
+def _is_retryable_x_error(exc: BaseException) -> bool:
+    """
+    X API エラーのリトライ可否を判定する。
+
+    リトライする: 429 (Rate Limit) / 503 (Service Unavailable) など一時的なエラー
+    リトライしない: 403 Forbidden（権限不足・重複投稿）/ 400 BadRequest（リクエスト不正）
+                   → これらはリトライしても状況が変わらないため即失敗にする
+    """
+    if not isinstance(exc, tweepy.errors.TweepyException):
+        return False
+    return not isinstance(exc, (tweepy.errors.Forbidden, tweepy.errors.BadRequest))
+
+
 @retry(
-    # 429 (Too Many Requests) と 503 は自動リトライ
-    retry=retry_if_exception_type(tweepy.errors.TweepyException),
+    retry=retry_if_exception(_is_retryable_x_error),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=2, min=10, max=60),
     before_sleep=before_sleep_log(logger, logging.WARNING),
@@ -179,8 +190,9 @@ def _create_tweet(
 
 def post_to_x(
     content: GeneratedContent,
-    affiliate_link: AffiliateLink,
+    affiliate_link: Optional[AffiliateLink] = None,
     media_id: Optional[str] = None,
+    post_mode: PostMode = "affiliate",
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
     access_token: Optional[str] = None,
@@ -194,8 +206,9 @@ def post_to_x(
     Parameters
     ----------
     content           : GeneratedContent (text, hashtags, category)
-    affiliate_link    : AffiliateLink
+    affiliate_link    : AffiliateLink（normal モードでは None でよい）
     media_id          : X v1.1 でアップロード済みの media_id_string
+    post_mode         : "affiliate"=リンク付き / "normal"=テキストのみ
     api_key/secret/.. : 認証情報（省略時は環境変数から取得）
     dry_run           : True のとき実際に投稿せずテキストだけ返す
 
@@ -217,13 +230,16 @@ def post_to_x(
         raise EnvironmentError(f"X 認証情報が不足: {missing}")
 
     # ---- ツイート本文の構築 ----
-    tweet_text = build_tweet_text(content, affiliate_link)
+    tweet_text = build_tweet_text(content, affiliate_link, post_mode=post_mode)
     _validate_tweet_length(tweet_text)
 
     logger.info("=== 投稿内容プレビュー ===")
-    logger.info("文字数  : %d字（URL23字固定換算）", len(tweet_text.replace(affiliate_link.url, "x" * 23)))
+    _url_for_count = affiliate_link.url if affiliate_link else ""
+    logger.info("文字数  : %d字（URL23字固定換算）", len(tweet_text.replace(_url_for_count, "x" * 23)) if _url_for_count else len(tweet_text))
     logger.info("本文    :\n%s", tweet_text)
     logger.info("media_id: %s", media_id or "(なし)")
+
+    _affiliate_url = affiliate_link.url if affiliate_link else ""
 
     if dry_run:
         logger.info("[DRY RUN] 実際の投稿はスキップしました。")
@@ -232,7 +248,7 @@ def post_to_x(
             tweet_url="https://x.com/dry_run",
             full_text=tweet_text,
             media_id=media_id,
-            affiliate_url=affiliate_link.url,
+            affiliate_url=_affiliate_url,
             char_count=len(tweet_text),
         )
 
@@ -264,6 +280,6 @@ def post_to_x(
         tweet_url=tweet_url,
         full_text=tweet_text,
         media_id=media_id,
-        affiliate_url=affiliate_link.url,
+        affiliate_url=_affiliate_url,
         char_count=len(tweet_text),
     )

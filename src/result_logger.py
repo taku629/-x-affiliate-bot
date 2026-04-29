@@ -31,12 +31,14 @@ def build_post_record(
     media_id: Optional[str] = None,
     hook_type: Optional[str] = None,
     thread_mode: bool = False,
+    post_mode: str = "affiliate",
 ) -> dict:
-    """投稿記録 dict を作成する。"""
+    """投稿記録 dict を作成する。post_mode でログから投稿種別を追跡できる。"""
     return {
         "posted_at":     datetime.now(timezone.utc).isoformat(),
         "dry_run":       dry_run,
         "thread_mode":   thread_mode,
+        "post_mode":     post_mode,
         "trend_name":    trend_name,
         "category":      category,
         "affiliate_url": affiliate_url,
@@ -84,6 +86,23 @@ def load_recent_posts(
                 pass
 
     return recent
+
+
+def count_today_posts(
+    log_path: Path = DEFAULT_LOG_PATH,
+    hours: int = 24,
+) -> int:
+    """
+    直近 N 時間の実投稿件数（dry_run=False のみ）を返す。
+
+    dry_run 実行分は件数に含めない。テスト実行が本番の投稿枠を
+    消費しないようにするための設計。
+    """
+    return sum(
+        1
+        for p in load_recent_posts(log_path, hours)
+        if not p.get("dry_run", False)
+    )
 
 
 def is_duplicate_trend(trend_name: str, recent_posts: list[dict]) -> bool:

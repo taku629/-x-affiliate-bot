@@ -107,7 +107,11 @@ jobs:
           echo "| post_mode | ${{ github.event.inputs.post_mode || 'normal (schedule)' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| dry_run | ${{ github.event.inputs.dry_run || 'false' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| with_image | ${{ github.event.inputs.with_image || 'true' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| affiliate_ratio | ${{ vars.AFFILIATE_RATIO || '0.0 (デフォルト)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| posts_per_run | ${{ vars.POSTS_PER_RUN || '1 (デフォルト)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| daily_max_posts | ${{ vars.DAILY_MAX_POSTS || '5 (デフォルト)' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| allowed_categories | ${{ vars.ALLOWED_CATEGORIES || '(全カテゴリ)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| product_theme | ${{ vars.PRODUCT_THEME || '(トレンド依存)' }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
       # ----------------------------------------------------------
@@ -144,14 +148,26 @@ jobs:
           # --- 楽天アフィリエイト ---
           RAKUTEN_AFFILIATE_ID:  ${{ secrets.RAKUTEN_AFFILIATE_ID }}
 
-          # --- ボット動作設定 ---
-          POSTS_PER_RUN:  "1"
-          LOG_LEVEL:      "INFO"
+          # --- ボット動作設定（GitHub Variables で上書き可能）---
+          # Settings → Secrets and variables → Actions → Variables タブで設定
+          LOG_LEVEL: "INFO"
 
-          # --- マネタイズ: 許可カテゴリ（空なら全カテゴリ許可） ---
-          # GitHub Variables で管理: Settings → Variables → ALLOWED_CATEGORIES
-          # 例: "tech" / "tech,health,food" / 空文字=全カテゴリ
+          # 1回の実行あたりの投稿件数（未設定なら 1）
+          POSTS_PER_RUN:    ${{ vars.POSTS_PER_RUN    || '1' }}
+
+          # 1日（24h）の最大投稿件数。X Free枠は50件/24h（未設定なら 5）
+          DAILY_MAX_POSTS:  ${{ vars.DAILY_MAX_POSTS  || '5' }}
+
+          # アフィリエイト投稿の割合 0.0〜1.0（未設定なら 0.0 = 全件通常投稿）
+          AFFILIATE_RATIO:  ${{ vars.AFFILIATE_RATIO  || '0.0' }}
+
+          # 許可カテゴリ（空なら全カテゴリ許可）投稿本数最大化のため当面は空推奨
+          # 例: "tech" / "tech,sports,entertainment"
           ALLOWED_CATEGORIES: ${{ vars.ALLOWED_CATEGORIES }}
+
+          # 投稿テーマ固定（空ならトレンド依存）
+          # 例: "USB-C充電器" / "ワイヤレスイヤホン"
+          PRODUCT_THEME: ${{ vars.PRODUCT_THEME }}
 
           # --- 手動実行オプションの受け渡し ---
           _DRY_RUN:    ${{ github.event.inputs.dry_run    || 'false' }}
