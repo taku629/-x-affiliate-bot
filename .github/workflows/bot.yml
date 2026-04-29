@@ -1,0 +1,201 @@
+name: X Affiliate Bot
+
+# =====================================================================
+# トリガー設定
+# =====================================================================
+on:
+  # cron は UTC 基準。日本時間 (JST = UTC+9) に換算:
+  #   JST  8:00 → UTC 23:00 (前日)
+  #   JST 12:00 → UTC  3:00
+  #   JST 19:00 → UTC 10:00
+  schedule:
+    - cron: "0 23 * * *"   # 毎日 JST 08:00
+    - cron: "0 3 * * *"    # 毎日 JST 12:00
+    - cron: "0 10 * * *"   # 毎日 JST 19:00
+
+  # 手動実行。Actions 画面から投稿モード・dry_run・画像有無を切り替え可能
+  workflow_dispatch:
+    inputs:
+      post_mode:
+        description: "投稿モード (normal=通常 / thread=スレッド ※thread は未実装のため normal にフォールバック)"
+        required: false
+        default: "normal"
+        type: choice
+        options:
+          - "normal"
+          - "thread"
+      dry_run:
+        description: "投稿せずに生成内容だけ確認する (true / false)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      with_image:
+        description: "画像を生成して添付する (true / false)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+# =====================================================================
+# 同時実行制御
+# =====================================================================
+# 前の実行が終わる前に次の cron が起動した場合、古い実行をキャンセル
+concurrency:
+  group: x-affiliate-bot
+  cancel-in-progress: true
+
+# =====================================================================
+# ジョブ定義
+# =====================================================================
+jobs:
+  post:
+    name: "トレンド取得 → AI生成 → X投稿"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ----------------------------------------------------------
+      # 1. リポジトリをチェックアウト
+      # ----------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # 2. Python のセットアップ
+      # ----------------------------------------------------------
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ----------------------------------------------------------
+      # 3. 依存パッケージのインストール
+      # ----------------------------------------------------------
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      # ----------------------------------------------------------
+      # 4. 投稿ログのキャッシュ復元（重複チェック用）
+      # ----------------------------------------------------------
+      - name: Restore post logs cache
+        uses: actions/cache@v4
+        with:
+          path: logs/
+          key: post-logs-${{ github.run_id }}
+          restore-keys: |
+            post-logs-
+
+      - name: Prepare logs directory
+        run: mkdir -p logs
+
+      # ----------------------------------------------------------
+      # 5. Job Summary に実行設定を記録（ボット実行前に書く）
+      # ----------------------------------------------------------
+      - name: Write execution config to Summary
+        run: |
+          echo "## X Affiliate Bot 実行設定" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 項目 | 値 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| トリガー | ${{ github.event_name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| post_mode | ${{ github.event.inputs.post_mode || 'normal (schedule)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| dry_run | ${{ github.event.inputs.dry_run || 'false' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| with_image | ${{ github.event.inputs.with_image || 'true' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| allowed_categories | ${{ vars.ALLOWED_CATEGORIES || '(全カテゴリ)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      # ----------------------------------------------------------
+      # 6. ボットの実行（tweet結果は Python が Summary に追記）
+      # ----------------------------------------------------------
+      - name: Run affiliate bot
+        env:
+          # --- X (Twitter) API ---
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_SECRET:          ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_BEARER_TOKEN:        ${{ secrets.X_BEARER_TOKEN }}
+
+          # --- Google Gemini API ---
+          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
+
+          # --- Hugging Face API ---
+          HF_API_TOKEN:          ${{ secrets.HF_API_TOKEN }}
+
+          # --- 楽天アフィリエイト ---
+          RAKUTEN_AFFILIATE_ID:  ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+
+          # --- ボット動作設定 ---
+          POSTS_PER_RUN:  "1"
+          LOG_LEVEL:      "INFO"
+
+          # --- マネタイズ: 許可カテゴリ（空なら全カテゴリ許可） ---
+          # GitHub Variables で管理: Settings → Variables → ALLOWED_CATEGORIES
+          # 例: "tech" / "tech,health,food" / 空文字=全カテゴリ
+          ALLOWED_CATEGORIES: ${{ vars.ALLOWED_CATEGORIES }}
+
+          # --- 手動実行オプションの受け渡し ---
+          _DRY_RUN:    ${{ github.event.inputs.dry_run    || 'false' }}
+          _WITH_IMAGE: ${{ github.event.inputs.with_image || 'true'  }}
+          _POST_MODE:  ${{ github.event.inputs.post_mode  || 'normal' }}
+
+        run: |
+          # --- post_mode の解決 ---
+          # NOTE: thread モードは現在未実装。実装後に下記フォールバックを削除すること。
+          if [ "$_POST_MODE" = "thread" ]; then
+            echo "::warning::thread モードは未実装です。normal モードで実行します。"
+            _POST_MODE="normal"
+          fi
+
+          # --- フラグの組み立て ---
+          EXTRA_FLAGS=""
+
+          if [ "$_DRY_RUN" = "true" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --dry-run"
+            echo "::notice::DRY RUN モードで実行します（投稿・画像生成はスキップ）"
+          fi
+
+          if [ "$_WITH_IMAGE" = "false" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --no-image"
+            echo "::notice::画像生成をスキップします"
+          fi
+
+          # thread 実装後はここで --thread フラグを追加する:
+          # if [ "$_POST_MODE" = "thread" ]; then EXTRA_FLAGS="$EXTRA_FLAGS --thread"; fi
+
+          # --- 実行 ---
+          CMD="python src/main.py${EXTRA_FLAGS}"
+          echo "実行コマンド: $CMD"
+          $CMD
+
+      # ----------------------------------------------------------
+      # 7. 投稿ログをアーティファクトとして保存（失敗時も保存）
+      # ----------------------------------------------------------
+      - name: Upload post logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-logs-run${{ github.run_number }}
+          path: logs/posts.jsonl
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # ----------------------------------------------------------
+      # 8. 失敗時に詳細なエラーサマリーを表示
+      # ----------------------------------------------------------
+      - name: Show error summary on failure
+        if: failure()
+        run: |
+          echo "::error::ボットの実行に失敗しました。上記のログを確認してください。"
+          echo "よくある原因:"
+          echo "  - アフィリエイトURL が REPLACE_ME のまま (src/affiliate.py を更新してください)"
+          echo "  - APIキーの期限切れ・権限不足 (X_API_KEY, GEMINI_API_KEY, HF_API_TOKEN)"
+          echo "  - X API の投稿制限超過 (無料枠: 50ツイート/24時間)"
+          echo "  - Hugging Face モデルの一時的な障害"
+          echo "  - Google Trends RSS の一時的な障害"

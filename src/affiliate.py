@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +36,19 @@ logger = logging.getLogger(__name__)
 #
 # ※ URLは短縮せずそのまま記載してください（Xが t.co で自動短縮します）
 
-AFFILIATE_LINKS: dict[str, str] = {
+AFFILIATE_LINKS: dict[str, Union[str, list[str]]] = {
     # スポーツ用品・トレーニンググッズ
     "sports": "https://www.rakuten.co.jp/search/sports/?dummy=REPLACE_ME",
 
     # エンタメ（音楽・映画・ゲーム・書籍）
     "entertainment": "https://www.rakuten.co.jp/search/entertainment/?dummy=REPLACE_ME",
 
-    # テクノロジー・ガジェット
-    "tech": "https://www.rakuten.co.jp/search/tech/?dummy=REPLACE_ME",
+    # テクノロジー・ガジェット（発行済み3件からランダム選択）
+    "tech": [
+        "https://a.r10.to/hXU6st",
+        "https://a.r10.to/h5Z2gk",
+        "https://a.r10.to/hPt8hk",
+    ],
 
     # ファッション・アパレル
     "fashion": "https://www.rakuten.co.jp/search/fashion/?dummy=REPLACE_ME",
@@ -134,7 +139,8 @@ def get_affiliate_link(
         )
         normalized = "other"
 
-    base_url = AFFILIATE_LINKS[normalized]
+    raw = AFFILIATE_LINKS[normalized]
+    base_url = random.choice(raw) if isinstance(raw, list) else raw
     is_dummy  = "REPLACE_ME" in base_url
 
     if is_dummy:
