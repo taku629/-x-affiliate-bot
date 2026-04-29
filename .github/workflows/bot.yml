@@ -122,8 +122,8 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
           X_BEARER_TOKEN:        ${{ secrets.X_BEARER_TOKEN }}
 
-          # --- Google Gemini API ---
-          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
+          # --- Anthropic Claude API ---
+          ANTHROPIC_API_KEY:     ${{ secrets.ANTHROPIC_API_KEY }}
 
           # --- Hugging Face API ---
           HF_API_TOKEN:          ${{ secrets.HF_API_TOKEN }}
@@ -195,7 +195,7 @@ jobs:
           echo "::error::ボットの実行に失敗しました。上記のログを確認してください。"
           echo "よくある原因:"
           echo "  - アフィリエイトURL が REPLACE_ME のまま (src/affiliate.py を更新してください)"
-          echo "  - APIキーの期限切れ・権限不足 (X_API_KEY, GEMINI_API_KEY, HF_API_TOKEN)"
+          echo "  - APIキーの期限切れ・権限不足 (X_API_KEY, ANTHROPIC_API_KEY, HF_API_TOKEN)"
           echo "  - X API の投稿制限超過 (無料枠: 50ツイート/24時間)"
           echo "  - Hugging Face モデルの一時的な障害"
           echo "  - Google Trends RSS の一時的な障害"

@@ -1,9 +1,9 @@
 """
 ai_generator.py
 ---------------
-Google Gemini API を使って、トレンドワードから X投稿コンテンツを生成する。
+Anthropic Claude API を使って、トレンドワードから X投稿コンテンツを生成する。
 
-無料枠: gemini-2.0-flash — 15 RPM / 1,500 RPD / 1M TPM
+モデル: claude-haiku-4-5 — 低レイテンシ・低コスト、SNS文生成に十分な品質
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 try:
-    import google.generativeai as genai
+    import anthropic as anthropic_sdk
 except ImportError:
-    genai = None  # type: ignore
+    anthropic_sdk = None  # type: ignore
 
 from trend_collector import TrendItem
 
@@ -34,7 +34,17 @@ VALID_CATEGORIES = {
     "food", "travel", "health", "books", "other",
 }
 
-_GEMINI_MODEL = "gemini-2.0-flash"
+# 6つの viral hook フレームワーク
+VALID_HOOK_TYPES = {
+    "curiosity",    # 好奇心: 「〜って知ってた？」「実は〜」
+    "urgency",      # 緊急性: 「今すぐ〜」「期間限定〜」
+    "social_proof", # 社会的証明: 「〜万人が注目」「話題の〜」
+    "fomo",         # FOMO: 「見逃すな」「〜だけが知っている」
+    "authority",    # 権威: 「専門家が認めた」「〜が証明」
+    "emotion",      # 感情: 感動・共感・笑いに訴える
+}
+
+_CLAUDE_MODEL = "claude-haiku-4-5"
 
 
 @dataclass
@@ -43,6 +53,8 @@ class GeneratedContent:
     image_prompt: str
     hashtags: list[str]
     affiliate_category: str
+    hook_type: str = "emotion"
+    thread_tweet: str = ""
     raw_json: dict = field(default_factory=dict)
 
     @property
@@ -72,11 +84,9 @@ def _trim_to_limit(body: str, tags: list[str]) -> str:
     if _count_x_chars(body) <= max_body:
         return f"{body}\n{tag_str}" if tag_str else body
 
-    # body をトリム（省略記号 "…" で1字）
     trimmed = ""
     budget = max_body - 1  # "…" 分を引く
     for ch in body:
-        cost = 1
         if _count_x_chars(trimmed + ch) > budget:
             break
         trimmed += ch
@@ -86,9 +96,7 @@ def _trim_to_limit(body: str, tags: list[str]) -> str:
 
 
 def _validate_and_fix(data: dict, keyword: str) -> dict:
-    """
-    Gemini の JSON レスポンスを検証し、不正な値をフォールバック値で補正する。
-    """
+    """JSON レスポンスを検証し、不正な値をフォールバック値で補正する。"""
     # post_text
     post_text = data.get("post_text", "")
     if not post_text or not isinstance(post_text, str):
@@ -113,11 +121,25 @@ def _validate_and_fix(data: dict, keyword: str) -> dict:
     if not image_prompt or not isinstance(image_prompt, str):
         image_prompt = f"Trending topic in Japan: {keyword}, photorealistic, 8k"
 
+    # hook_type
+    hook_type = data.get("hook_type", "emotion")
+    if not isinstance(hook_type, str) or hook_type.lower() not in VALID_HOOK_TYPES:
+        hook_type = "emotion"
+    else:
+        hook_type = hook_type.lower()
+
+    # thread_tweet (optional)
+    thread_tweet = data.get("thread_tweet", "")
+    if not isinstance(thread_tweet, str):
+        thread_tweet = ""
+
     return {
         "post_text":          post_text,
         "image_prompt":       image_prompt,
         "hashtags":           hashtags,
         "affiliate_category": category,
+        "hook_type":          hook_type,
+        "thread_tweet":       thread_tweet,
     }
 
 
@@ -133,18 +155,29 @@ def _build_prompt(trend: TrendItem) -> str:
 トレンドキーワード: {trend.keyword}
 検索量: {trend.approx_traffic}{news_section}
 
+以下の6つのviral hookフレームワークのいずれかを選び、そのフックを使った投稿を作成してください:
+- curiosity  : 好奇心を刺激 (「〜って知ってた？」「実は〜」)
+- urgency    : 緊急性・限定感 (「今すぐ〜」「期間限定〜」)
+- social_proof: 社会的証明 (「〜万人が注目」「話題の〜」)
+- fomo       : 機会損失への恐れ (「見逃すな」「〜だけが知っている」)
+- authority  : 権威・専門性 (「専門家が認めた」「〜が証明」)
+- emotion    : 感情に訴える (感動・共感・ユーモアなど)
+
 以下のJSONを生成してください（マークダウンコードブロックなし・生JSONのみ）:
 {{
   "post_text": "投稿本文（ハッシュタグを含む・{POST_BODY_LIMIT}字以内）",
   "image_prompt": "英語の画像生成プロンプト（Photorealistic/8k等のキーワード含む）",
   "hashtags": ["#タグ1", "#タグ2", "#タグ3"],
-  "affiliate_category": "sports|entertainment|tech|fashion|food|travel|health|books|other のいずれか"
+  "affiliate_category": "sports|entertainment|tech|fashion|food|travel|health|books|other のいずれか",
+  "hook_type": "curiosity|urgency|social_proof|fomo|authority|emotion のいずれか",
+  "thread_tweet": "スレッド2ツイート目の文章（省略可・空文字OK）"
 }}
 
 制約:
 - post_text は {POST_BODY_LIMIT} 字以内（ハッシュタグを含む）
 - hashtags は 2〜5個
 - affiliate_category はトレンドに最も近いカテゴリを選ぶ
+- hook_type は選んだフレームワーク名を正確に記入する
 - 炎上リスクの高い内容（政治・訃報・事件）は避ける
 - 読者の関心を引くトーンで、自然な日本語で書く"""
 
@@ -154,30 +187,55 @@ def generate_post_content(
     api_key: Optional[str] = None,
 ) -> GeneratedContent:
     """
-    Gemini API を呼び出してトレンドから投稿コンテンツを生成する。
+    Anthropic Claude API を呼び出してトレンドから投稿コンテンツを生成する。
 
     Parameters
     ----------
     trend   : TrendItem（キーワード・ニュース情報）
-    api_key : Gemini API キー（省略時は環境変数 GEMINI_API_KEY）
+    api_key : Anthropic API キー（省略時は環境変数 ANTHROPIC_API_KEY）
 
     Returns
     -------
     GeneratedContent
     """
-    key = api_key or os.environ.get("GEMINI_API_KEY", "")
+    if anthropic_sdk is None:
+        raise ImportError("anthropic がインストールされていません: pip install anthropic")
 
-    if genai is None:
-        raise ImportError("google-generativeai がインストールされていません: pip install google-generativeai")
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise ValueError("ANTHROPIC_API_KEY が設定されていません")
 
-    genai.configure(api_key=key)
-    model = genai.GenerativeModel(_GEMINI_MODEL)
-
+    client = anthropic_sdk.Anthropic(api_key=key)
     prompt = _build_prompt(trend)
-    logger.info("Gemini API 呼び出し: keyword=%s", trend.keyword)
+    logger.info("Anthropic API 呼び出し: model=%s keyword=%s", _CLAUDE_MODEL, trend.keyword)
 
-    response = model.generate_content(prompt)
-    raw_text = response.text.strip()
+    try:
+        response = client.messages.create(
+            model=_CLAUDE_MODEL,
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic_sdk.RateLimitError as e:
+        retry_after = e.response.headers.get("retry-after", "?") if e.response else "?"
+        logger.error("Anthropic API error (rate limit): retry-after=%s %s", retry_after, e)
+        raise RuntimeError(
+            f"Anthropic API レート制限超過。{retry_after}秒後に再試行してください。"
+        ) from e
+    except anthropic_sdk.AuthenticationError as e:
+        logger.error("Anthropic API error (authentication): %s", e)
+        raise RuntimeError("Anthropic API 認証エラー: ANTHROPIC_API_KEY を確認してください。") from e
+    except anthropic_sdk.APIStatusError as e:
+        logger.error("Anthropic API error (status=%s): %s", e.status_code, e.message)
+        raise RuntimeError(
+            f"Anthropic API エラー (HTTP {e.status_code}): {e.message}"
+        ) from e
+    except anthropic_sdk.APIConnectionError as e:
+        logger.error("Anthropic API connection error: %s", e)
+        raise RuntimeError(f"Anthropic API 接続エラー: {e}") from e
+
+    raw_text = next(
+        (block.text for block in response.content if block.type == "text"), ""
+    ).strip()
 
     # コードブロック除去
     raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -200,13 +258,14 @@ def generate_post_content(
         if _count_x_chars(post_text) > POST_BODY_LIMIT:
             post_text = _trim_to_limit(post_text, [])
 
-    # CTA 品質チェック（弱いテキストの早期警告）
+    # CTA 品質チェック
     _CTA_KEYWORDS = ["リンク", "チェック", "詳しくは", "購入", "はこちら", "もっと", "今すぐ", "試して", "おすすめ", "必見"]
     if not any(kw in post_text for kw in _CTA_KEYWORDS):
         logger.warning("CTA が弱い可能性があります。post_text にクリック誘導フレーズが含まれていません。")
 
     logger.info(
-        "生成完了: %d字 category=%s", _count_x_chars(post_text), fixed["affiliate_category"]
+        "生成完了: %d字 category=%s hook=%s",
+        _count_x_chars(post_text), fixed["affiliate_category"], fixed["hook_type"],
     )
 
     return GeneratedContent(
@@ -214,5 +273,7 @@ def generate_post_content(
         image_prompt=fixed["image_prompt"],
         hashtags=hashtags,
         affiliate_category=fixed["affiliate_category"],
+        hook_type=fixed["hook_type"],
+        thread_tweet=fixed["thread_tweet"],
         raw_json=fixed,
     )

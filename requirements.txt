@@ -1,8 +1,8 @@
 # X (Twitter) Affiliate Bot - Dependencies
 # All libraries use free-tier APIs only
 
-# Google Gemini API (text generation)
-google-generativeai>=0.7.0
+# Anthropic Claude API (text generation)
+anthropic>=0.50.0
 
 # X (Twitter) API client (supports v1.1 media upload + v2 posting)
 tweepy>=4.14.0
