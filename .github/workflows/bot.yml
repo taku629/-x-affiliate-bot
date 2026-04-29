@@ -141,19 +141,32 @@ jobs:
           import os, sys
           import tweepy
 
+          # --- 診断: 値の長さと先頭6文字を出力（値を晒さず不一致を特定する） ---
+          creds = {
+              "X_API_KEY":             os.environ.get("X_API_KEY", ""),
+              "X_API_SECRET":          os.environ.get("X_API_SECRET", ""),
+              "X_ACCESS_TOKEN":        os.environ.get("X_ACCESS_TOKEN", ""),
+              "X_ACCESS_TOKEN_SECRET": os.environ.get("X_ACCESS_TOKEN_SECRET", ""),
+          }
+          print("--- credential診断 (ローカル .env と比較してください) ---")
+          for name, val in creds.items():
+              prefix = val[:6] if len(val) >= 6 else val
+              print(f"  {name}: len={len(val)}  prefix={prefix}...")
+          print("---")
+
           client = tweepy.Client(
-              consumer_key=os.environ["X_API_KEY"],
-              consumer_secret=os.environ["X_API_SECRET"],
-              access_token=os.environ["X_ACCESS_TOKEN"],
-              access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+              consumer_key=creds["X_API_KEY"],
+              consumer_secret=creds["X_API_SECRET"],
+              access_token=creds["X_ACCESS_TOKEN"],
+              access_token_secret=creds["X_ACCESS_TOKEN_SECRET"],
           )
           try:
               me = client.get_me(user_auth=True)
               print(f"::notice::X認証OK: @{me.data.username} (id={me.data.id})")
           except tweepy.errors.Unauthorized as e:
               print(f"::error::401 Unauthorized: {e}")
-              print("::error::X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET が間違っています。")
-              print("::error::Developer Portal で Access Token を再発行し GitHub Secrets を更新してください。")
+              print("::error::consumer_key/secret または access_token/secret が間違っています。")
+              print("::error::上の prefix/len をローカルの .env 値と比較し、異なる行を特定してください。")
               sys.exit(1)
           except tweepy.errors.Forbidden as e:
               print(f"::error::403 Forbidden: {e}")
