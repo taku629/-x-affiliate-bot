@@ -128,7 +128,11 @@ jobs:
           echo "::notice::ANTHROPIC_API_KEY 確認OK (長さ: ${#ANTHROPIC_API_KEY}文字)"
 
       # ----------------------------------------------------------
-      # 7. X API 認証確認（get_me で OAuth 1.0a が通るか事前チェック）
+      # 7. X API 認証確認（raw HTTP + tweepy の両方で分離診断）
+      #
+      #  raw HTTP OK / tweepy OK  → 正常
+      #  raw HTTP OK / tweepy NG  → tweepy バージョン問題 → requirements.txt をピン留め
+      #  raw HTTP NG / tweepy NG  → Secrets の値または X App 設定の問題
       # ----------------------------------------------------------
       - name: Verify X API credentials
         env:
@@ -140,40 +144,72 @@ jobs:
           python - <<'PYEOF'
           import os, sys
           import tweepy
+          import requests
+          from requests_oauthlib import OAuth1Session
 
-          # --- 診断: 値の長さと先頭6文字を出力（値を晒さず不一致を特定する） ---
           creds = {
               "X_API_KEY":             os.environ.get("X_API_KEY", ""),
               "X_API_SECRET":          os.environ.get("X_API_SECRET", ""),
               "X_ACCESS_TOKEN":        os.environ.get("X_ACCESS_TOKEN", ""),
               "X_ACCESS_TOKEN_SECRET": os.environ.get("X_ACCESS_TOKEN_SECRET", ""),
           }
+
+          # --- 診断: 値の長さと先頭6文字を出力（値を晒さず不一致を特定する） ---
           print("--- credential診断 (ローカル .env と比較してください) ---")
           for name, val in creds.items():
               prefix = val[:6] if len(val) >= 6 else val
               print(f"  {name}: len={len(val)}  prefix={prefix}...")
+          print(f"  tweepy   : {tweepy.__version__}")
+          print(f"  requests : {requests.__version__}")
           print("---")
 
+          # STEP 1: raw HTTP (requests_oauthlib) で GET /2/users/me
+          print("\n[raw HTTP] GET /2/users/me ...")
+          oauth_session = OAuth1Session(
+              creds["X_API_KEY"], creds["X_API_SECRET"],
+              creds["X_ACCESS_TOKEN"], creds["X_ACCESS_TOKEN_SECRET"],
+          )
+          r = oauth_session.get("https://api.twitter.com/2/users/me")
+          print(f"  HTTP {r.status_code}")
+          if r.ok:
+              username = r.json()["data"]["username"]
+              print(f"  raw HTTP 認証成功: @{username}")
+              raw_ok = True
+          else:
+              print(f"  raw HTTP 認証失敗: {r.text}")
+              raw_ok = False
+
+          # STEP 2: tweepy で GET /2/users/me
+          print("\n[tweepy] get_me(user_auth=True) ...")
           client = tweepy.Client(
               consumer_key=creds["X_API_KEY"],
               consumer_secret=creds["X_API_SECRET"],
               access_token=creds["X_ACCESS_TOKEN"],
               access_token_secret=creds["X_ACCESS_TOKEN_SECRET"],
           )
+          tweepy_ok = False
           try:
               me = client.get_me(user_auth=True)
-              print(f"::notice::X認証OK: @{me.data.username} (id={me.data.id})")
+              print(f"  tweepy 認証成功: @{me.data.username} (id={me.data.id})")
+              tweepy_ok = True
           except tweepy.errors.Unauthorized as e:
-              print(f"::error::401 Unauthorized: {e}")
-              print("::error::consumer_key/secret または access_token/secret が間違っています。")
-              print("::error::上の prefix/len をローカルの .env 値と比較し、異なる行を特定してください。")
-              sys.exit(1)
+              print(f"  tweepy 401 Unauthorized: {e}")
           except tweepy.errors.Forbidden as e:
-              print(f"::error::403 Forbidden: {e}")
-              print("::error::アプリ権限が Read only です。Developer Portal で Read+Write に変更し Access Token を再発行してください。")
-              sys.exit(1)
+              print(f"  tweepy 403 Forbidden: {e}")
           except Exception as e:
-              print(f"::error::予期しないエラー: {type(e).__name__}: {e}")
+              print(f"  tweepy {type(e).__name__}: {e}")
+
+          # 診断サマリー
+          print("\n--- 診断サマリー ---")
+          if raw_ok and tweepy_ok:
+              print("::notice::raw HTTP: OK / tweepy: OK → 認証は正常です")
+          elif raw_ok and not tweepy_ok:
+              print("::error::raw HTTP: OK / tweepy: NG → tweepy のバージョン問題と推定")
+              print(f"::error::tweepy {tweepy.__version__} が原因の可能性。requirements.txt を tweepy==4.14.0 にピン留めしてください。")
+              sys.exit(1)
+          else:
+              print("::error::raw HTTP: NG → Secrets の値か X App 設定を再確認してください")
+              print("::error::Developer Portal で App が ACTIVE、Read+Write 権限、Access Token が最新かを確認してください")
               sys.exit(1)
           PYEOF
 
