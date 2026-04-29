@@ -128,7 +128,44 @@ jobs:
           echo "::notice::ANTHROPIC_API_KEY 確認OK (長さ: ${#ANTHROPIC_API_KEY}文字)"
 
       # ----------------------------------------------------------
-      # 7. ボットの実行（tweet結果は Python が Summary に追記）
+      # 7. X API 認証確認（get_me で OAuth 1.0a が通るか事前チェック）
+      # ----------------------------------------------------------
+      - name: Verify X API credentials
+        env:
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_SECRET:          ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys
+          import tweepy
+
+          client = tweepy.Client(
+              consumer_key=os.environ["X_API_KEY"],
+              consumer_secret=os.environ["X_API_SECRET"],
+              access_token=os.environ["X_ACCESS_TOKEN"],
+              access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+          )
+          try:
+              me = client.get_me(user_auth=True)
+              print(f"::notice::X認証OK: @{me.data.username} (id={me.data.id})")
+          except tweepy.errors.Unauthorized as e:
+              print(f"::error::401 Unauthorized: {e}")
+              print("::error::X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET が間違っています。")
+              print("::error::Developer Portal で Access Token を再発行し GitHub Secrets を更新してください。")
+              sys.exit(1)
+          except tweepy.errors.Forbidden as e:
+              print(f"::error::403 Forbidden: {e}")
+              print("::error::アプリ権限が Read only です。Developer Portal で Read+Write に変更し Access Token を再発行してください。")
+              sys.exit(1)
+          except Exception as e:
+              print(f"::error::予期しないエラー: {type(e).__name__}: {e}")
+              sys.exit(1)
+          PYEOF
+
+      # ----------------------------------------------------------
+      # 8. ボットの実行（tweet結果は Python が Summary に追記）
       # ----------------------------------------------------------
       - name: Run affiliate bot
         env:

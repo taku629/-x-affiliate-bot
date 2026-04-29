@@ -152,12 +152,18 @@ def _is_retryable_x_error(exc: BaseException) -> bool:
     X API エラーのリトライ可否を判定する。
 
     リトライする: 429 (Rate Limit) / 503 (Service Unavailable) など一時的なエラー
-    リトライしない: 403 Forbidden（権限不足・重複投稿）/ 400 BadRequest（リクエスト不正）
+    リトライしない: 401 Unauthorized（認証情報の誤り）
+                   403 Forbidden（権限不足・重複投稿）
+                   400 BadRequest（リクエスト不正）
                    → これらはリトライしても状況が変わらないため即失敗にする
     """
     if not isinstance(exc, tweepy.errors.TweepyException):
         return False
-    return not isinstance(exc, (tweepy.errors.Forbidden, tweepy.errors.BadRequest))
+    return not isinstance(exc, (
+        tweepy.errors.Unauthorized,
+        tweepy.errors.Forbidden,
+        tweepy.errors.BadRequest,
+    ))
 
 
 @retry(
@@ -222,7 +228,8 @@ def post_to_x(
         "api_secret":          api_secret          or os.environ.get("X_API_SECRET", ""),
         "access_token":        access_token        or os.environ.get("X_ACCESS_TOKEN", ""),
         "access_token_secret": access_token_secret or os.environ.get("X_ACCESS_TOKEN_SECRET", ""),
-        "bearer_token":        bearer_token        or os.environ.get("X_BEARER_TOKEN", ""),
+        # 空文字列は None に変換する。tweepy に "" を渡すと初期化挙動が不定になるため。
+        "bearer_token":        bearer_token or os.environ.get("X_BEARER_TOKEN") or None,
     }
     required = ["api_key", "api_secret", "access_token", "access_token_secret"]
     missing = [k for k in required if not creds[k]]
@@ -261,6 +268,17 @@ def post_to_x(
             text=tweet_text,
             media_ids=[media_id] if media_id else None,
         )
+    except tweepy.errors.Unauthorized as e:
+        # 401: consumer_key/secret または access_token/secret が間違っている
+        logger.error(
+            "401 Unauthorized: %s\n"
+            "確認事項:\n"
+            "  1. GitHub Secrets の X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET が最新か確認する\n"
+            "  2. Developer Portal で Access Token を再発行し Secrets を更新する\n"
+            "  ※ ローカルの .env と GitHub Secrets の値が異なる可能性があります",
+            e,
+        )
+        raise
     except tweepy.errors.Forbidden as e:
         # 403: アプリ権限不足・重複ツイート等は即失敗（リトライ不要）
         logger.error(
